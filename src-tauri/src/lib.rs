@@ -1403,56 +1403,119 @@ fn spawn_cleanup_loop(app: AppHandle) {
 }
 
 #[cfg(desktop)]
+fn paint_icon_disc(
+    rgba: &mut [u8],
+    size: usize,
+    center_x: f32,
+    center_y: f32,
+    radius: f32,
+    color: (u8, u8, u8, u8),
+) {
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - center_x;
+            let dy = y as f32 - center_y;
+            if (dx * dx + dy * dy).sqrt() > radius {
+                continue;
+            }
+            let index = (y * size + x) * 4;
+            rgba[index] = color.0;
+            rgba[index + 1] = color.1;
+            rgba[index + 2] = color.2;
+            rgba[index + 3] = color.3;
+        }
+    }
+}
+
+#[cfg(desktop)]
+fn paint_icon_ring(
+    rgba: &mut [u8],
+    size: usize,
+    center_x: f32,
+    center_y: f32,
+    inner_radius: f32,
+    outer_radius: f32,
+    color: (u8, u8, u8, u8),
+) {
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - center_x;
+            let dy = y as f32 - center_y;
+            let distance = (dx * dx + dy * dy).sqrt();
+            if distance < inner_radius || distance > outer_radius {
+                continue;
+            }
+            let index = (y * size + x) * 4;
+            rgba[index] = color.0;
+            rgba[index + 1] = color.1;
+            rgba[index + 2] = color.2;
+            rgba[index + 3] = color.3;
+        }
+    }
+}
+
+#[cfg(desktop)]
+fn paint_icon_rect(
+    rgba: &mut [u8],
+    size: usize,
+    left: usize,
+    top: usize,
+    width: usize,
+    height: usize,
+    color: (u8, u8, u8, u8),
+) {
+    let max_x = (left + width).min(size);
+    let max_y = (top + height).min(size);
+    for y in top..max_y {
+        for x in left..max_x {
+            let index = (y * size + x) * 4;
+            rgba[index] = color.0;
+            rgba[index + 1] = color.1;
+            rgba[index + 2] = color.2;
+            rgba[index + 3] = color.3;
+        }
+    }
+}
+
+#[cfg(desktop)]
 fn tray_icon_image(status: TrayStatus) -> Image<'static> {
     let size = 18usize;
     let center = (size as f32 - 1.0) / 2.0;
     let mut rgba = vec![0u8; size * size * 4];
 
-    let (r, g, b, alpha, radius, core_radius) = match status {
-        TrayStatus::Idle => (176u8, 186u8, 198u8, 236u8, 5.2f32, 2.5f32),
-        TrayStatus::Ready => (97u8, 214u8, 143u8, 255u8, 5.5f32, 2.5f32),
-        TrayStatus::Recording => (255u8, 93u8, 93u8, 255u8, 5.6f32, 2.9f32),
-        TrayStatus::Processing => (99u8, 187u8, 255u8, 255u8, 5.6f32, 2.2f32),
-        TrayStatus::Error => (255u8, 122u8, 154u8, 255u8, 5.6f32, 2.6f32),
-    };
-
-    for y in 0..size {
-        for x in 0..size {
-            let dx = x as f32 - center;
-            let dy = y as f32 - center;
-            let distance = (dx * dx + dy * dy).sqrt();
-            let index = (y * size + x) * 4;
-
-            if distance <= radius {
-                let falloff = if distance <= core_radius {
-                    1.0
-                } else {
-                    ((radius - distance) / (radius - core_radius)).clamp(0.0, 1.0)
-                };
-                let glow_alpha = (alpha as f32 * (0.28 + falloff * 0.72)).round() as u8;
-                rgba[index] = r;
-                rgba[index + 1] = g;
-                rgba[index + 2] = b;
-                rgba[index + 3] = glow_alpha;
-            }
+    match status {
+        TrayStatus::Idle => {
+            paint_icon_disc(&mut rgba, size, center, center, 5.0, (175, 186, 200, 238));
+            paint_icon_disc(&mut rgba, size, center, center, 2.2, (235, 240, 247, 255));
         }
-    }
-
-    if matches!(status, TrayStatus::Processing) {
-        for y in 0..size {
-            for x in 0..size {
-                let dx = x as f32 - center + 0.65;
-                let dy = y as f32 - center - 0.8;
-                let distance = (dx * dx + dy * dy).sqrt();
-                if distance > 2.1 || distance < 0.9 {
-                    continue;
-                }
-                let index = (y * size + x) * 4;
-                rgba[index] = 242;
-                rgba[index + 1] = 249;
-                rgba[index + 2] = 255;
-                rgba[index + 3] = 210;
-            }
+        TrayStatus::Ready => {
+            paint_icon_disc(&mut rgba, size, center, center, 5.7, (36, 208, 117, 255));
+            paint_icon_disc(&mut rgba, size, center, center, 2.35, (242, 255, 248, 255));
+            paint_icon_rect(&mut rgba, size, 5, 8, 2, 3, (242, 255, 248, 255));
+            paint_icon_rect(&mut rgba, size, 7, 10, 2, 2, (242, 255, 248, 255));
+            paint_icon_rect(&mut rgba, size, 9, 7, 2, 5, (242, 255, 248, 255));
+        }
+        TrayStatus::Recording => {
+            paint_icon_disc(&mut rgba, size, center, center, 5.8, (255, 82, 82, 255));
+            paint_icon_disc(&mut rgba, size, center, center, 2.85, (255, 204, 204, 255));
+        }
+        TrayStatus::Processing => {
+            paint_icon_ring(&mut rgba, size, center, center, 3.15, 5.9, (44, 146, 255, 255));
+            paint_icon_disc(&mut rgba, size, center, center, 2.1, (205, 234, 255, 252));
+            paint_icon_ring(
+                &mut rgba,
+                size,
+                center + 1.25,
+                center - 1.3,
+                1.55,
+                3.25,
+                (245, 250, 255, 255),
+            );
+        }
+        TrayStatus::Error => {
+            paint_icon_disc(&mut rgba, size, center, center, 5.8, (255, 120, 154, 255));
+            paint_icon_rect(&mut rgba, size, 8, 4, 2, 6, (255, 244, 248, 255));
+            paint_icon_rect(&mut rgba, size, 8, 11, 2, 2, (255, 244, 248, 255));
         }
     }
 
@@ -1501,6 +1564,7 @@ fn update_tray_ui(app: &AppHandle, state: &SharedState) -> Result<(), String> {
         .map_err(|_| "State lock poisoned".to_string())?
         .trim()
         .is_empty();
+    let can_paste_transcript = has_transcript && matches!(status, TrayStatus::Idle | TrayStatus::Ready);
 
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         tray.set_icon(Some(tray_icon_image(status)))
@@ -1533,7 +1597,7 @@ fn update_tray_ui(app: &AppHandle, state: &SharedState) -> Result<(), String> {
             .map_err(|error| format!("Unable to update tray record availability: {error}"))?;
         handles
             .paste_transcript
-            .set_enabled(has_transcript)
+            .set_enabled(can_paste_transcript)
             .map_err(|error| format!("Unable to update tray paste availability: {error}"))?;
     }
 

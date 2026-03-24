@@ -75,6 +75,19 @@ textarea {
   backdrop-filter: blur(18px) saturate(112%);
 }
 
+.shell[data-status='processing'] .widget-card {
+  background:
+    radial-gradient(circle at top right, rgba(99, 187, 255, 0.16), transparent 28%),
+    linear-gradient(168deg, rgba(12, 18, 28, 0.92), rgba(16, 26, 40, 0.96));
+}
+
+.shell[data-status='processing'][data-attention='active'] .widget-card {
+  border-color: rgba(133, 205, 255, 0.18);
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.18),
+    0 0 22px rgba(99, 187, 255, 0.08);
+}
+
 .widget-card::before {
   content: '';
   position: absolute;
@@ -145,7 +158,7 @@ textarea {
 
 .status-dot[data-status='processing'] {
   background: var(--accent-2);
-  box-shadow: 0 0 8px rgba(99, 187, 255, 0.38);
+  box-shadow: 0 0 10px rgba(99, 187, 255, 0.52);
 }
 
 .status-dot[data-status='ready'] {
@@ -207,11 +220,12 @@ textarea {
 }
 
 .record-button[data-status='processing'] {
-  border-color: rgba(99, 187, 255, 0.28);
-  background: rgba(99, 187, 255, 0.1);
+  border-color: rgba(99, 187, 255, 0.42);
+  background: rgba(99, 187, 255, 0.18);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 0 14px rgba(99, 187, 255, 0.16);
+    0 0 0 1px rgba(99, 187, 255, 0.16),
+    0 0 18px rgba(99, 187, 255, 0.24);
 }
 
 .record-button[data-status='ready'] {
@@ -233,6 +247,11 @@ textarea {
 .record-button:disabled {
   cursor: wait;
   opacity: 0.75;
+}
+
+.record-button[data-status='processing']:disabled {
+  cursor: progress;
+  opacity: 1;
 }
 
 .record-button__core,
@@ -260,7 +279,7 @@ textarea {
 
 .record-button[data-status='processing'] .record-button__core {
   background: linear-gradient(180deg, #d9f4ff, var(--accent-2));
-  box-shadow: 0 0 8px rgba(99, 187, 255, 0.16);
+  box-shadow: 0 0 10px rgba(99, 187, 255, 0.26);
 }
 
 .record-button[data-status='ready'] .record-button__core {
@@ -286,8 +305,12 @@ textarea {
 }
 
 .record-button[data-status='processing'] .record-button__ring {
-  border-color: rgba(99, 187, 255, 0.24);
+  border-color: rgba(99, 187, 255, 0.4);
   animation: spin 1s linear infinite;
+}
+
+.shell[data-status='processing'] .status-label {
+  color: #d8efff;
 }
 
 .record-button[data-status='ready'] .record-button__ring {

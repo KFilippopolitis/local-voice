@@ -445,6 +445,17 @@ function setStatus(status: Status): void {
   render();
 }
 
+function invalidateTranscriptForNewRecording(nextJobId: string): void {
+  const previousJobId = state.currentJobId;
+  state.currentJobId = nextJobId;
+  state.transcript = '';
+  transcriptInput.value = '';
+
+  if (previousJobId && previousJobId !== nextJobId) {
+    void invoke('delete_job_artifacts', { jobId: previousJobId }).catch(() => undefined);
+  }
+}
+
 async function startRecording(): Promise<void> {
   if (state.status === 'recording' || state.status === 'processing') {
     return;
@@ -452,10 +463,11 @@ async function startRecording(): Promise<void> {
 
   try {
     const response = await invoke<StartRecordingResponse>('start_recording_session');
-    state.currentJobId = response.jobId;
+    invalidateTranscriptForNewRecording(response.jobId);
     state.elapsedSeconds = 0;
     state.recordingStartedAtMs = Date.now();
     setStatus('recording');
+    await syncWindowFrame();
     setNotice('Recording.', 'info');
 
     state.elapsedTimer = window.setInterval(() => {
@@ -555,6 +567,11 @@ async function copyCurrentTranscript(clearAfterCopy = false): Promise<void> {
 }
 
 async function pasteCurrentTranscript(source: PasteSource): Promise<void> {
+  if (state.status === 'recording' || state.status === 'processing') {
+    setNotice('Wait for the new transcript to finish before pasting.', 'warning');
+    return;
+  }
+
   const text = state.transcript.trim();
   if (!text) {
     setNotice('No transcript to paste.', 'warning');
@@ -652,6 +669,7 @@ function renderDiagnostics(): void {
 
 function render(): void {
   const hasTranscript = Boolean(state.transcript.trim());
+  const transcriptActionsEnabled = hasTranscript && state.status === 'idle';
   const visualStatus: VisualStatus = state.status === 'idle' && hasTranscript ? 'ready' : state.status;
   const showNotice = state.isExpanded || state.notice.tone !== 'info' || state.status !== 'idle';
   const compactMode = !state.isExpanded;
@@ -674,10 +692,10 @@ function render(): void {
   statusDot.dataset.status = visualStatus;
   recordButton.dataset.status = visualStatus;
   recordButton.disabled = state.status === 'processing';
-  copyButton.disabled = !hasTranscript;
-  pasteButton.disabled = !hasTranscript;
-  copyClearButton.disabled = !hasTranscript;
-  deleteButton.disabled = !hasTranscript;
+  copyButton.disabled = !transcriptActionsEnabled;
+  pasteButton.disabled = !transcriptActionsEnabled;
+  copyClearButton.disabled = !transcriptActionsEnabled;
+  deleteButton.disabled = !transcriptActionsEnabled;
   downloadModelButton.disabled = state.status === 'recording' || state.status === 'processing';
 
   expandButtonLabel.textContent = state.isExpanded ? 'Collapse panel' : 'Expand panel';
