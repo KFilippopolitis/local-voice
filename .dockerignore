@@ -1,0 +1,11 @@
+node_modules
+dist
+target
+src-tauri/target
+python-backend/.venv
+python-backend/models
+python-backend/**/*.pyc
+python-backend/**/__pycache__
+python-backend/*.egg-info
+python-backend/**/*.egg-info
+.git

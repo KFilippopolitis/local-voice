@@ -1,0 +1,1 @@
+{"main-capability":{"identifier":"main-capability","description":"Capability for the main voice widget window","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-start-dragging","core:window:allow-set-position","core:window:allow-set-size","global-shortcut:allow-register","global-shortcut:allow-unregister-all"]}}

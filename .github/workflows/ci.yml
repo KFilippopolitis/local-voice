@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ubuntu-source-path:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Ensure repo scripts are executable
+        run: chmod +x setup.sh doctor.sh run-dev.sh scripts/bootstrap-ubuntu.sh scripts/doctor.sh
+
+      - name: Bootstrap toolchains and dependencies
+        run: ./setup.sh --skip-model-download
+
+      - name: Run doctor
+        run: ./doctor.sh
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Cargo check
+        shell: bash
+        run: |
+          source "$HOME/.cargo/env"
+          cargo check --manifest-path src-tauri/Cargo.toml
