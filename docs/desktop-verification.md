@@ -28,9 +28,6 @@ Local verification was run on `2026-03-24` on this machine.
 
 - session: `ubuntu:GNOME`
 - session type: `x11`
-- display: `:1`
-- tray watcher present: `org.kde.StatusNotifierWatcher`
-- registered tray item: `tray_icon_tray_app_voice_tray`
 - app process present: `target/debug/local-voice`
 - X11 client present: `Local Voice`
 - direct microphone path check passed with native `ffmpeg` capture

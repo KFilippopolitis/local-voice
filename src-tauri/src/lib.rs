@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -157,6 +158,13 @@ struct SharedState {
     tray_handles: Mutex<Option<TrayHandles>>,
 }
 
+#[derive(Debug, Clone)]
+struct BackendLayout {
+    backend_root: PathBuf,
+    python_command: Option<PathBuf>,
+    packaged: bool,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DiagnosticItem {
@@ -189,6 +197,14 @@ struct BackendResponse {
     detected_language: Option<String>,
     device: Option<String>,
     warnings: Option<Vec<String>>,
+    error: Option<BackendError>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadModelBackendResponse {
+    ok: bool,
+    model_path: Option<String>,
     error: Option<BackendError>,
 }
 
@@ -225,24 +241,34 @@ struct BackendUiStatePayload {
 }
 
 async fn transcribe_job(
+    app: &AppHandle,
     settings: &AppSettings,
     job_id: String,
     job_dir: PathBuf,
     raw_path: PathBuf,
     mime_type: String,
 ) -> Result<ProcessRecordingResponse, String> {
-    let workspace_root = workspace_root();
-    let backend_root = workspace_root.join("python-backend");
-    if !backend_root.exists() {
-        return Err("Python backend directory is missing.".into());
+    let backend = resolve_backend_layout(Some(app));
+    if !backend.backend_root.exists() {
+        return Err(if backend.packaged {
+            "The packaged transcription backend is missing. Rebuild the Linux package.".into()
+        } else {
+            "Python backend directory is missing.".into()
+        });
     }
 
-    let python_command = resolve_python_command(&workspace_root)
-        .ok_or_else(|| "Python was not found. Install Python 3 and the backend environment first.".to_string())?;
+    let python_command = backend.python_command.clone().ok_or_else(|| {
+        if backend.packaged {
+            "The packaged Python runtime is unavailable. Rebuild the Linux package or ensure python3 exists on this system."
+                .to_string()
+        } else {
+            "Python was not found. Install Python 3 and the backend environment first.".to_string()
+        }
+    })?;
 
     let mut command = TokioCommand::new(python_command);
     command
-        .current_dir(&backend_root)
+        .current_dir(&backend.backend_root)
         .arg("-m")
         .arg("offline_voice_worker.cli")
         .arg("transcribe")
@@ -260,6 +286,7 @@ async fn transcribe_job(
         .arg(settings.prefer_gpu.to_string())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    configure_backend_python_env_tokio(&mut command, &backend);
 
     if !settings.model_path.trim().is_empty() {
         command.arg("--model-path").arg(&settings.model_path);
@@ -383,7 +410,7 @@ fn bootstrap(_app: AppHandle, state: State<'_, SharedState>) -> Result<Bootstrap
         .map_err(|_| "State lock poisoned".to_string())?
         .clone();
     Ok(BootstrapPayload {
-        diagnostics: collect_diagnostics(&settings),
+        diagnostics: collect_diagnostics(&_app, &settings),
         dev_seed_transcript: dev_seed_transcript(),
         settings,
     })
@@ -421,7 +448,7 @@ fn save_settings(
         .map_err(|_| "State lock poisoned".to_string())? = settings.clone();
 
     Ok(BootstrapPayload {
-        diagnostics: collect_diagnostics(&settings),
+        diagnostics: collect_diagnostics(&app, &settings),
         dev_seed_transcript: dev_seed_transcript(),
         settings,
     })
@@ -470,7 +497,10 @@ fn start_recording_session(state: State<'_, SharedState>) -> Result<StartRecordi
 }
 
 #[tauri::command]
-async fn stop_recording_session(state: State<'_, SharedState>) -> Result<ProcessRecordingResponse, String> {
+async fn stop_recording_session(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> Result<ProcessRecordingResponse, String> {
     let settings = state
         .settings
         .lock()
@@ -510,6 +540,7 @@ async fn stop_recording_session(state: State<'_, SharedState>) -> Result<Process
     }
 
     transcribe_job(
+        &app,
         &settings,
         session.job_id,
         session.job_dir,
@@ -544,7 +575,7 @@ fn cancel_recording_session(state: State<'_, SharedState>) -> Result<(), String>
 
 #[tauri::command]
 async fn process_recording(
-    _app: AppHandle,
+    app: AppHandle,
     state: State<'_, SharedState>,
     audio_bytes: Vec<u8>,
     mime_type: String,
@@ -568,7 +599,109 @@ async fn process_recording(
     let raw_path = job_dir.join(format!("raw.{}", extension_for_mime(&mime_type)));
     fs::write(&raw_path, audio_bytes).map_err(|error| format!("Unable to write captured audio: {error}"))?;
 
-    transcribe_job(&settings, job_id, job_dir, raw_path, mime_type).await
+    transcribe_job(&app, &settings, job_id, job_dir, raw_path, mime_type).await
+}
+
+#[tauri::command]
+async fn download_default_model(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> Result<BootstrapPayload, String> {
+    let mut settings = state
+        .settings
+        .lock()
+        .map_err(|_| "State lock poisoned".to_string())?
+        .clone();
+    let backend = resolve_backend_layout(Some(&app));
+    if !backend.backend_root.exists() {
+        return Err(if backend.packaged {
+            "The packaged transcription backend is missing. Rebuild the Linux package.".into()
+        } else {
+            "Python backend directory is missing.".into()
+        });
+    }
+
+    let python_command = backend.python_command.clone().ok_or_else(|| {
+        if backend.packaged {
+            "The packaged Python runtime is unavailable. Rebuild the Linux package or ensure python3 exists on this system."
+                .to_string()
+        } else {
+            "Python was not found. Install Python 3 and the backend environment first.".to_string()
+        }
+    })?;
+
+    let model_output_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Unable to resolve the application data directory: {error}"))?
+        .join("models");
+    fs::create_dir_all(&model_output_dir)
+        .map_err(|error| format!("Unable to create the model directory: {error}"))?;
+
+    let mut command = TokioCommand::new(python_command);
+    command
+        .current_dir(&backend.backend_root)
+        .arg("-m")
+        .arg("offline_voice_worker.cli")
+        .arg("download-model")
+        .arg("--model-profile")
+        .arg(&settings.model_profile)
+        .arg("--output-dir")
+        .arg(&model_output_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_backend_python_env_tokio(&mut command, &backend);
+
+    let output = command
+        .output()
+        .await
+        .map_err(|error| format!("Unable to launch the model downloader: {error}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let parsed: DownloadModelBackendResponse = serde_json::from_str(&stdout).map_err(|error| {
+        if stderr.is_empty() {
+            format!("Model downloader returned invalid JSON: {error}")
+        } else {
+            format!("Model downloader returned invalid JSON: {error}. Stderr: {stderr}")
+        }
+    })?;
+
+    if !output.status.success() || !parsed.ok {
+        let backend_error = parsed
+            .error
+            .map(|error| match error.detail {
+                Some(detail) if !detail.is_empty() => format!("{}: {} ({detail})", error.code, error.message),
+                _ => format!("{}: {}", error.code, error.message),
+            })
+            .unwrap_or_else(|| {
+                if stderr.is_empty() {
+                    "Model download failed.".into()
+                } else {
+                    format!("Model download failed: {stderr}")
+                }
+            });
+        return Err(backend_error);
+    }
+
+    let model_path = parsed
+        .model_path
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Model download did not return a local model path.".to_string())?;
+
+    settings.model_path = model_path;
+    settings = settings.sanitized();
+    write_settings_to_disk(&app, &settings)?;
+    *state
+        .settings
+        .lock()
+        .map_err(|_| "State lock poisoned".to_string())? = settings.clone();
+
+    Ok(BootstrapPayload {
+        diagnostics: collect_diagnostics(&app, &settings),
+        dev_seed_transcript: dev_seed_transcript(),
+        settings,
+    })
 }
 
 #[tauri::command]
@@ -651,16 +784,19 @@ async fn paste_text_into_focused_app(text: String) -> Result<PasteActionResult, 
     }
 }
 
-fn collect_diagnostics(settings: &AppSettings) -> Vec<DiagnosticItem> {
+fn collect_diagnostics(app: &AppHandle, settings: &AppSettings) -> Vec<DiagnosticItem> {
     let mut diagnostics = Vec::new();
-    let workspace_root = workspace_root();
-    let backend_root = workspace_root.join("python-backend");
+    let backend = resolve_backend_layout(Some(app));
 
-    if !backend_root.exists() {
+    if !backend.backend_root.exists() {
         diagnostics.push(DiagnosticItem {
             level: "error".into(),
             code: "backend-missing".into(),
-            message: "The python-backend directory is missing from the project.".into(),
+            message: if backend.packaged {
+                "The packaged transcription backend is missing. Rebuild the Linux package.".into()
+            } else {
+                "The python-backend directory is missing from the project.".into()
+            },
         });
     }
 
@@ -672,19 +808,27 @@ fn collect_diagnostics(settings: &AppSettings) -> Vec<DiagnosticItem> {
         });
     }
 
-    let python_command = resolve_python_command(&workspace_root);
+    let python_command = backend.python_command.clone();
     if python_command.is_none() {
         diagnostics.push(DiagnosticItem {
             level: "error".into(),
             code: "python-missing".into(),
-            message: "Python 3 was not found. Install Python and create the backend environment before launching the widget.".into(),
+            message: if backend.packaged {
+                "The packaged Python runtime is unavailable. Rebuild the Linux package or ensure python3 exists on this system."
+                    .into()
+            } else {
+                "Python 3 was not found. Install Python and create the backend environment before launching the widget."
+                    .into()
+            },
         });
-    } else if backend_root.exists() {
-        let output = StdCommand::new(python_command.unwrap())
-            .current_dir(&backend_root)
+    } else if backend.backend_root.exists() {
+        let mut command = StdCommand::new(python_command.unwrap());
+        command
+            .current_dir(&backend.backend_root)
             .arg("-c")
-            .arg("import faster_whisper, ctranslate2")
-            .output();
+            .arg("import faster_whisper, ctranslate2, offline_voice_worker.cli");
+        configure_backend_python_env_std(&mut command, &backend);
+        let output = command.output();
 
         match output {
             Ok(output) if output.status.success() => {}
@@ -749,20 +893,21 @@ fn write_settings_to_disk(app: &AppHandle, settings: &AppSettings) -> Result<(),
 }
 
 fn load_settings_from_disk(app: &AppHandle) -> AppSettings {
+    let defaults = default_settings_for_app(Some(app));
     let path = match settings_path(app) {
         Ok(path) => path,
-        Err(_) => return AppSettings::default(),
+        Err(_) => return defaults,
     };
 
     if !path.exists() {
-        return AppSettings::default();
+        return defaults;
     }
 
     fs::read_to_string(path)
         .ok()
         .and_then(|contents| serde_json::from_str::<AppSettings>(&contents).ok())
         .map(AppSettings::sanitized)
-        .unwrap_or_default()
+        .unwrap_or(defaults)
 }
 
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -781,14 +926,40 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn default_settings_for_app(app: Option<&AppHandle>) -> AppSettings {
+    AppSettings {
+        model_path: default_model_path_for_app(app).to_string_lossy().into_owned(),
+        ..AppSettings::default()
+    }
+}
+
 fn default_temp_root() -> PathBuf {
     std::env::temp_dir().join("local-voice")
 }
 
 fn default_model_path() -> PathBuf {
-    let candidate = workspace_root().join("python-backend/models/faster-whisper-small");
-    if candidate.exists() {
-        candidate
+    default_model_path_for_app(None)
+}
+
+fn default_model_path_for_app(app: Option<&AppHandle>) -> PathBuf {
+    if let Some(app) = app {
+        if let Ok(app_data_dir) = app.path().app_data_dir() {
+            let app_data_model = app_data_dir.join("models/faster-whisper-small");
+            if app_data_model.exists() {
+                return app_data_model;
+            }
+        }
+
+        let backend = resolve_backend_layout(Some(app));
+        let bundled_model = backend.backend_root.join("models/faster-whisper-small");
+        if bundled_model.exists() {
+            return bundled_model;
+        }
+    }
+
+    let source_model = workspace_root().join("python-backend/models/faster-whisper-small");
+    if source_model.exists() {
+        source_model
     } else {
         PathBuf::new()
     }
@@ -971,11 +1142,41 @@ fn find_in_path(executable: &str) -> Option<PathBuf> {
     })
 }
 
-fn resolve_python_command(workspace_root: &Path) -> Option<PathBuf> {
+fn resolve_backend_layout(app: Option<&AppHandle>) -> BackendLayout {
+    if let Some(app) = app {
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            let resource_candidates = [
+                resource_dir.join("resources/bundled-backend"),
+                resource_dir.join("bundled-backend"),
+            ];
+
+            for backend_root in resource_candidates {
+                if backend_root.is_dir() {
+                    let python_command = resolve_python_command(&backend_root);
+                    return BackendLayout {
+                        backend_root,
+                        python_command,
+                        packaged: true,
+                    };
+                }
+            }
+        }
+    }
+
+    let backend_root = workspace_root().join("python-backend");
+    let python_command = resolve_python_command(&backend_root);
+    BackendLayout {
+        backend_root,
+        python_command,
+        packaged: false,
+    }
+}
+
+fn resolve_python_command(backend_root: &Path) -> Option<PathBuf> {
     let candidates = [
-        workspace_root.join("python-backend/.venv/bin/python3"),
-        workspace_root.join("python-backend/.venv/bin/python"),
-        workspace_root.join("python-backend/.venv/Scripts/python.exe"),
+        backend_root.join(".venv/bin/python3"),
+        backend_root.join(".venv/bin/python"),
+        backend_root.join(".venv/Scripts/python.exe"),
     ];
 
     for candidate in candidates {
@@ -985,6 +1186,59 @@ fn resolve_python_command(workspace_root: &Path) -> Option<PathBuf> {
     }
 
     find_in_path("python3").or_else(|| find_in_path("python"))
+}
+
+fn configure_backend_python_env_tokio(command: &mut TokioCommand, backend: &BackendLayout) {
+    command
+        .env_remove("PYTHONHOME")
+        .env_remove("PYTHONPATH")
+        .env_remove("__PYVENV_LAUNCHER__")
+        .env("PYTHONNOUSERSITE", "1");
+
+    let venv_root = backend.backend_root.join(".venv");
+    if venv_root.is_dir() {
+        command.env("VIRTUAL_ENV", &venv_root);
+
+        #[cfg(windows)]
+        let venv_bin = venv_root.join("Scripts");
+        #[cfg(not(windows))]
+        let venv_bin = venv_root.join("bin");
+
+        if venv_bin.is_dir() {
+            command.env("PATH", prepend_env_path(&venv_bin, std::env::var_os("PATH")));
+        }
+    }
+}
+
+fn configure_backend_python_env_std(command: &mut StdCommand, backend: &BackendLayout) {
+    command
+        .env_remove("PYTHONHOME")
+        .env_remove("PYTHONPATH")
+        .env_remove("__PYVENV_LAUNCHER__")
+        .env("PYTHONNOUSERSITE", "1");
+
+    let venv_root = backend.backend_root.join(".venv");
+    if venv_root.is_dir() {
+        command.env("VIRTUAL_ENV", &venv_root);
+
+        #[cfg(windows)]
+        let venv_bin = venv_root.join("Scripts");
+        #[cfg(not(windows))]
+        let venv_bin = venv_root.join("bin");
+
+        if venv_bin.is_dir() {
+            command.env("PATH", prepend_env_path(&venv_bin, std::env::var_os("PATH")));
+        }
+    }
+}
+
+fn prepend_env_path(prefix: &Path, existing: Option<OsString>) -> OsString {
+    let mut paths = vec![prefix.to_path_buf()];
+    if let Some(existing) = existing {
+        paths.extend(std::env::split_paths(&existing));
+    }
+
+    std::env::join_paths(paths).unwrap_or_else(|_| prefix.as_os_str().to_owned())
 }
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -1391,6 +1645,7 @@ pub fn run() {
             delete_job_artifacts,
             copy_text_to_clipboard,
             paste_text_into_focused_app,
+            download_default_model,
         ]);
 
     let app = builder

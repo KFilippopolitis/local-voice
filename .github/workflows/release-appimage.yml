@@ -1,0 +1,78 @@
+name: release-appimage
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  linux-appimage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository at release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Ensure repo scripts are executable
+        run: chmod +x setup.sh doctor.sh run-dev.sh scripts/bootstrap-ubuntu.sh scripts/doctor.sh scripts/build-package-linux.sh scripts/prepare-bundled-backend.sh
+
+      - name: Bootstrap toolchains and dependencies
+        run: ./setup.sh --skip-model-download
+
+      - name: Run doctor
+        run: ./doctor.sh
+
+      - name: Build AppImage
+        run: npm run package:linux
+
+      - name: Locate AppImage and checksum
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          files=(src-tauri/target/release/bundle/appimage/*.AppImage)
+
+          if [[ "${#files[@]}" -ne 1 ]]; then
+            echo "Expected exactly one AppImage, found ${#files[@]}." >&2
+            printf '%s\n' "${files[@]}" >&2
+            exit 1
+          fi
+
+          appimage_path="${files[0]}"
+          bundle_dir="$(dirname "$appimage_path")"
+          appimage_name="$(basename "$appimage_path")"
+          sha256_name="${appimage_name}.sha256"
+
+          (
+            cd "$bundle_dir"
+            sha256sum "$appimage_name" > "$sha256_name"
+          )
+
+          echo "appimage_path=$appimage_path" >> "$GITHUB_OUTPUT"
+          echo "sha256_path=$bundle_dir/$sha256_name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-voice-appimage-${{ github.event.release.tag_name }}
+          if-no-files-found: error
+          path: |
+            ${{ steps.bundle.outputs.appimage_path }}
+            ${{ steps.bundle.outputs.sha256_path }}
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.bundle.outputs.appimage_path }}
+            ${{ steps.bundle.outputs.sha256_path }}

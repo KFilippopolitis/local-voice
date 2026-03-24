@@ -2,7 +2,7 @@
 
 This project depends on third-party software. Each dependency remains subject to its own license.
 
-This file is intended to document the main third-party components used by the current Linux-first source release of Local Voice.
+This file is intended to document the main third-party components used by the current Linux-first Local Voice release surface, including the source setup and the current Linux AppImage packaging flow.
 
 It is not legal advice.
 
@@ -12,6 +12,7 @@ Current scope:
 
 - public source repository
 - Ubuntu/Debian-like Linux setup
+- Linux AppImage build flow for maintainers
 - system-installed FFmpeg
 - locally created Python environment
 - locally downloaded speech model files
@@ -20,8 +21,11 @@ Important:
 
 - this repository does **not** intend to redistribute downloaded model weights by default
 - this repository does **not** bundle FFmpeg by default in the current source-based setup flow
-- if maintainers later ship packaged binaries that bundle FFmpeg, models, or other third-party binaries, this notice file should be reviewed and expanded
+- packaged Linux builds may bundle the Python backend and Python dependencies
+- packaged Linux builds still do **not** bundle FFmpeg by default
+- if maintainers later ship packaged binaries that bundle FFmpeg, models, or additional third-party binaries, this notice file should be reviewed and expanded
 - current recommendation: keep FFmpeg as a user-installed system dependency
+- packaged artifacts should also be audited for bundled system libraries before public binary distribution
 
 ## Application dependencies
 

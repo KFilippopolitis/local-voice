@@ -54,7 +54,7 @@ Secondary path with more caveats:
 
 - Wayland sessions
 
-Assume Linux source setup first. Do not describe the app as fully cross-platform unless that has actually been implemented and verified.
+Assume Linux source setup first, with an optional AppImage packaging path for maintainers. Do not describe the app as fully cross-platform unless that has actually been implemented and verified.
 
 ## Setup flow
 
@@ -72,6 +72,9 @@ Important details:
 - the bootstrap path installs system dependencies, Node.js if needed, Rust if needed, and `uv` if needed
 - the backend environment is managed with `uv`
 - the default local model path is `python-backend/models/faster-whisper-small`
+- the packaged Linux build command is `npm run package:linux`
+- packaged builds bundle the Python backend but still expect system-installed `ffmpeg`
+- packaged builds do not bundle model weights by default
 
 ## Repo map
 
@@ -139,6 +142,7 @@ Useful repo-root commands:
 ./doctor.sh
 ./run-dev.sh
 npm run build
+npm run package:linux
 npm run smoke:ubuntu
 source "$HOME/.cargo/env" && cargo check --manifest-path src-tauri/Cargo.toml
 ```
@@ -177,5 +181,5 @@ Prefer:
 - small, testable modules
 - explicit user-facing error messages
 - Linux behavior that is documented honestly
-- reliable local setup over ambitious packaging changes
-- repo cleanliness suitable for a public GitHub source release
+- reliable local setup over speculative packaging changes
+- repo cleanliness suitable for a public GitHub release

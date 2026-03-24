@@ -219,8 +219,12 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
               <span>Auto clear after a copy action</span>
             </label>
             <div class="settings-actions">
+              <button class="action-button" id="download-model-button" type="button">Download default model</button>
               <button class="action-button" type="submit">Save settings</button>
             </div>
+            <p class="settings-help">
+              Packaged builds still need a local model. This downloads the default small model into the app data directory.
+            </p>
           </form>
         </section>
       </section>
@@ -242,6 +246,7 @@ const brandTitle = document.querySelector<HTMLHeadingElement>('.brand-title')!;
 const settingsToggle = document.querySelector<HTMLButtonElement>('#settings-toggle')!;
 const settingsPanel = document.querySelector<HTMLElement>('#settings-panel')!;
 const settingsForm = document.querySelector<HTMLFormElement>('#settings-form')!;
+const downloadModelButton = document.querySelector<HTMLButtonElement>('#download-model-button')!;
 const recordButton = document.querySelector<HTMLButtonElement>('#record-button')!;
 const statusDot = document.querySelector<HTMLSpanElement>('#status-dot')!;
 const statusLabel = document.querySelector<HTMLParagraphElement>('#status-label')!;
@@ -381,6 +386,26 @@ function collectSettingsFromForm(): AppSettings {
   };
 }
 
+async function downloadDefaultModel(): Promise<void> {
+  downloadModelButton.disabled = true;
+  setNotice('Downloading the default small model...', 'info');
+
+  try {
+    const saved = await invoke<BootstrapPayload>('download_default_model');
+    state.settings = saved.settings;
+    state.diagnostics = saved.diagnostics;
+    applySettingsToForm(saved.settings);
+    await registerShortcuts();
+    setNotice('Default model downloaded and selected.', 'info');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setNotice(`Unable to download the default model: ${message}`, 'error');
+  } finally {
+    downloadModelButton.disabled = false;
+    render();
+  }
+}
+
 function getExpandedHeight(): number {
   const hasTranscript = Boolean(state.transcript.trim());
   let nextHeight = 168;
@@ -389,7 +414,7 @@ function getExpandedHeight(): number {
     nextHeight = 366;
   }
   if (state.settingsOpen) {
-    nextHeight = hasTranscript ? 534 : 432;
+    nextHeight = hasTranscript ? 576 : 474;
   }
 
   return nextHeight;
@@ -653,6 +678,7 @@ function render(): void {
   pasteButton.disabled = !hasTranscript;
   copyClearButton.disabled = !hasTranscript;
   deleteButton.disabled = !hasTranscript;
+  downloadModelButton.disabled = state.status === 'recording' || state.status === 'processing';
 
   expandButtonLabel.textContent = state.isExpanded ? 'Collapse panel' : 'Expand panel';
   expandButton.setAttribute('aria-label', state.isExpanded ? 'Collapse panel' : 'Expand panel');
@@ -866,6 +892,10 @@ settingsForm.addEventListener('submit', async (event) => {
     const message = error instanceof Error ? error.message : String(error);
     setNotice(`Unable to save settings: ${message}`, 'error');
   }
+});
+
+downloadModelButton.addEventListener('click', () => {
+  void downloadDefaultModel();
 });
 
 window.addEventListener('beforeunload', () => {

@@ -10,6 +10,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "bundle:prepare": "bash ./scripts/prepare-bundled-backend.sh",
+    "package:linux": "bash ./scripts/build-package-linux.sh",
     "doctor": "bash ./scripts/doctor.sh",
     "setup:ubuntu": "bash ./scripts/bootstrap-ubuntu.sh",
     "smoke:ubuntu": "bash ./scripts/smoke-test-ubuntu-docker.sh",
